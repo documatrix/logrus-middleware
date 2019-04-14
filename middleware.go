@@ -3,6 +3,9 @@
 package logrusmiddleware
 
 import (
+	"bufio"
+	"errors"
+	"net"
 	"net/http"
 	"time"
 
@@ -18,16 +21,27 @@ type (
 		Name string
 	}
 
+	responseData struct {
+		status int
+		size   int
+	}
+
 	// Handler is the actual middleware that handles logging
 	Handler struct {
 		http.ResponseWriter
-		status    int
-		size      int
-		m         *Middleware
-		handler   http.Handler
-		component string
+		m            *Middleware
+		handler      http.Handler
+		component    string
+		responseData *responseData
 	}
 )
+
+func (h *Handler) newResponseData() *responseData {
+	return &responseData{
+		status: 0,
+		size:   0,
+	}
+}
 
 // Handler create a new handler. component, if set, is emitted in the log messages.
 func (m *Middleware) Handler(h http.Handler, component string) *Handler {
@@ -38,21 +52,30 @@ func (m *Middleware) Handler(h http.Handler, component string) *Handler {
 	}
 }
 
+// Hijack implements http.Hijacker. It simply wraps the underlying
+// ResponseWriter's Hijack method if there is one, or returns an error.
+func (h *Handler) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := h.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, errors.New("Parent ResponseWriter is no Hijacker")
+}
+
 // Write is a wrapper for the "real" ResponseWriter.Write
 func (h *Handler) Write(b []byte) (int, error) {
-	if h.status == 0 {
+	if h.responseData.status == 0 {
 		// The status will be StatusOK if WriteHeader has not been called yet
-		h.status = http.StatusOK
+		h.responseData.status = http.StatusOK
 	}
 	size, err := h.ResponseWriter.Write(b)
-	h.size += size
+	h.responseData.size += size
 	return size, err
 }
 
 // WriteHeader is a wrapper around ResponseWriter.WriteHeader
 func (h *Handler) WriteHeader(s int) {
 	h.ResponseWriter.WriteHeader(s)
-	h.status = s
+	h.responseData.status = s
 }
 
 // Header is a wrapper around ResponseWriter.Header
@@ -64,11 +87,14 @@ func (h *Handler) Header() http.Header {
 func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 
-	h.handler.ServeHTTP(rw, r)
+	h = h.m.Handler(h.handler, h.component)
+	h.ResponseWriter = rw
+	h.responseData = h.newResponseData()
+	h.handler.ServeHTTP(h, r)
 
 	latency := time.Since(start)
 
-	status := h.status
+	status := h.responseData.status
 	if status == 0 {
 		status = 200
 	}
@@ -79,7 +105,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		"request":    r.RequestURI,
 		"remote":     r.RemoteAddr,
 		"duration":   float64(latency.Nanoseconds()) / float64(1000),
-		"size":       h.size,
+		"size":       h.responseData.size,
 		"referer":    r.Referer(),
 		"user-agent": r.UserAgent(),
 	}
