@@ -90,22 +90,11 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	h = h.m.Handler(h.handler, h.component)
 	h.ResponseWriter = rw
 	h.responseData = h.newResponseData()
-	h.handler.ServeHTTP(h, r)
-
-	latency := time.Since(start)
-
-	status := h.responseData.status
-	if status == 0 {
-		status = 200
-	}
 
 	fields := logrus.Fields{
-		"status":     status,
 		"method":     r.Method,
 		"request":    r.RequestURI,
 		"remote":     r.RemoteAddr,
-		"duration":   float64(latency.Nanoseconds()) / float64(1000),
-		"size":       h.responseData.size,
 		"referer":    r.Referer(),
 		"user-agent": r.UserAgent(),
 	}
@@ -118,9 +107,26 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		fields["component"] = h.component
 	}
 
-	if l := h.m.Logger; l != nil {
-		l.WithFields(fields).Info("completed handling request")
-	} else {
-		logrus.WithFields(fields).Info("completed handling request")
+	info := func(msg string) {
+		if l := h.m.Logger; l != nil {
+			l.WithFields(fields).Info(msg)
+		} else {
+			logrus.WithFields(fields).Info(msg)
+		}
 	}
+	info("starting reqeust")
+
+	h.handler.ServeHTTP(h, r)
+
+	latency := time.Since(start)
+	fields["duration"] = float64(latency.Nanoseconds()) / float64(1000)
+
+	status := h.responseData.status
+	if status == 0 {
+		status = 200
+	}
+	fields["status"] = status
+	fields["size"] = h.responseData.size
+
+	info("completed handling request")
 }
