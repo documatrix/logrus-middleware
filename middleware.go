@@ -114,7 +114,7 @@ func (h *Handler) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 			logrus.WithFields(fields).Info(msg)
 		}
 	}
-	info("starting reqeust")
+	info("starting request")
 
 	h.handler.ServeHTTP(h, r)
 
