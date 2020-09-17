@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/sirupsen/logrus"
